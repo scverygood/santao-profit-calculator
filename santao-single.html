@@ -589,6 +589,34 @@
       box-shadow: var(--shadow);
       margin-bottom: 8px;
     }
+
+    /* ===== Multi-campus Compare ===== */
+    .compare-modal { max-width: 95%; width: 1100px; max-height: 92vh; overflow-y: auto; }
+    .compare-select-area { margin-bottom: 16px; }
+    .compare-select-area p { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+    .compare-checkbox-list { display: flex; flex-direction: column; gap: 8px; max-height: 200px; overflow-y: auto; padding: 12px; background: var(--bg); border-radius: var(--radius-sm); border: 1px solid var(--rule); }
+    .compare-checkbox-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--bg2); border-radius: var(--radius-sm); cursor: pointer; font-size: 14px; }
+    .compare-checkbox-item:hover { background: #f0f4ff; }
+    .compare-checkbox-item input { width: 18px; height: 18px; accent-color: var(--accent); }
+    .compare-checkbox-item .compare-item-date { font-size: 12px; color: var(--muted); margin-left: auto; }
+    .compare-btn-row { display: flex; gap: 8px; margin-top: 12px; }
+    .compare-result { margin-top: 20px; }
+    .compare-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--bg2); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
+    .compare-table th, .compare-table td { padding: 10px 12px; text-align: center; border-bottom: 1px solid var(--rule); }
+    .compare-table th { background: #f8f9fb; font-weight: 600; font-size: 12px; color: var(--muted); white-space: nowrap; }
+    .compare-table th:first-child, .compare-table td:first-child { text-align: left; font-weight: 600; color: var(--muted); white-space: nowrap; }
+    .compare-table tr:hover { background: #f8f9fb; }
+    .compare-table .best { color: var(--green); font-weight: 700; }
+    .compare-table .worst { color: var(--red); }
+    .compare-chart-area { margin-top: 20px; padding: 16px; background: var(--bg2); border-radius: var(--radius); box-shadow: var(--shadow); }
+    .compare-chart-area h4 { font-size: 15px; margin-bottom: 12px; }
+    .compare-chart-area .chart { min-height: 320px; }
+    @media (max-width: 768px) {
+      .compare-modal { width: 96%; }
+      .compare-table { font-size: 12px; }
+      .compare-table th, .compare-table td { padding: 6px 4px; }
+      .compare-chart-area .chart { min-height: 240px; }
+    }
   </style>
 </head>
 <body>
@@ -699,6 +727,7 @@
       <button class="btn btn-import" onclick="App.showImportDialog()">导入JSON</button>
       <button class="btn btn-save" onclick="App.saveRecord()">保存数据</button>
       <button class="btn btn-records" onclick="App.showRecords()">我的记录</button>
+      <button class="btn btn-records" onclick="App.showCompare()">多校区对比</button>
     </div>
   </main>
 
@@ -736,6 +765,22 @@
         <button class="btn btn-secondary" onclick="App.closeModal('saveModal')">取消</button>
         <button class="btn btn-primary" onclick="App.confirmSaveRecord()">保存</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Compare Modal -->
+  <div class="modal-overlay" id="compareModal">
+    <div class="modal compare-modal">
+      <h3>多校区对比分析</h3>
+      <div class="compare-select-area">
+        <p>勾选要对比的记录（至少2个），然后点击"开始对比"</p>
+        <div class="compare-checkbox-list" id="compare-checkbox-list"></div>
+        <div class="compare-btn-row">
+          <button class="btn btn-primary" onclick="App.runCompare()">开始对比</button>
+          <button class="btn btn-secondary" onclick="App.closeModal('compareModal')">关闭</button>
+        </div>
+      </div>
+      <div class="compare-result" id="compare-result"></div>
     </div>
   </div>
 
@@ -2184,6 +2229,152 @@ var App = {
     } catch(e) {}
     this.showRecords();
     this.showToast('记录已删除');
+  },
+
+  /* ===== 多校区对比 ===== */
+  showCompare: function() {
+    var records = this.getRecords();
+    var listEl = document.getElementById('compare-checkbox-list');
+    var resultEl = document.getElementById('compare-result');
+    resultEl.innerHTML = '';
+
+    if (records.length === 0) {
+      listEl.innerHTML = '<p style="text-align:center;color:var(--muted);padding:20px;">暂无保存记录，请先保存至少2个校区方案</p>';
+    } else {
+      var self = this;
+      var html = '';
+      records.forEach(function(r) {
+        html += '<label class="compare-checkbox-item">' +
+          '<input type="checkbox" value="' + r.id + '">' +
+          '<span>' + self.esc(r.name) + '</span>' +
+          '<span class="compare-item-date">' + (r.date || '') + '</span>' +
+        '</label>';
+      });
+      listEl.innerHTML = html;
+    }
+    this.showModal('compareModal');
+  },
+
+  runCompare: function() {
+    var checkboxes = document.querySelectorAll('#compare-checkbox-list input[type="checkbox"]:checked');
+    if (checkboxes.length < 2) {
+      this.showToast('请至少勾选2个记录进行对比');
+      return;
+    }
+
+    var self = this;
+    var selectedIds = [];
+    checkboxes.forEach(function(cb) { selectedIds.push(parseFloat(cb.value)); });
+
+    var records = this.getRecords();
+    var selectedRecords = records.filter(function(r) {
+      return selectedIds.indexOf(r.id) >= 0;
+    });
+
+    // Calculate each record
+    var results = [];
+    selectedRecords.forEach(function(r) {
+      var oldData = self.data;
+      var defaults = self.getDefaultData();
+      self.data = Object.assign(defaults, r.data);
+      var calc = self.calculate();
+      results.push({
+        name: r.name,
+        date: r.date,
+        calc: calc
+      });
+    });
+
+    this.renderCompareResult(results);
+  },
+
+  renderCompareResult: function(results) {
+    var self = this;
+    var html = '';
+
+    // ---- Comparison Table ----
+    var metrics = [
+      { key: 'monthlyNetRevenue', label: '月度收入', fmt: 'money' },
+      { key: 'annualRevenue', label: '年度收入', fmt: 'money' },
+      { key: 'monthlyTotalCost', label: '月度成本', fmt: 'money' },
+      { key: 'monthlyNetProfit', label: '月度利润', fmt: 'money' },
+      { key: 'annualNetProfit', label: '年度利润', fmt: 'money' },
+      { key: 'profitMargin', label: '利润率', fmt: 'pct' },
+      { key: 'totalInitialInvestment', label: '初始投资', fmt: 'money' },
+      { key: 'paybackMonths', label: '回本周期(月)', fmt: 'int' },
+      { key: 'areaEfficiency', label: '坪效(元/m²)', fmt: 'money' },
+      { key: 'staffEfficiency', label: '人效(元/人)', fmt: 'money' },
+      { key: 'totalEnrollment', label: '在读学员', fmt: 'int' },
+      { key: 'monthlyNewStudents', label: '月度新生', fmt: 'int' }
+    ];
+
+    html += '<table class="compare-table"><thead><tr><th>对比指标</th>';
+    results.forEach(function(r) {
+      html += '<th>' + self.esc(r.name) + '</th>';
+    });
+    html += '</tr></thead><tbody>';
+
+    metrics.forEach(function(m) {
+      var values = results.map(function(r) { return r.calc[m.key]; });
+      var bestVal, worstVal;
+      if (m.key === 'monthlyTotalCost' || m.key === 'totalInitialInvestment' || m.key === 'paybackMonths') {
+        // Lower is better
+        bestVal = Math.min.apply(null, values.filter(function(v) { return v > 0; }));
+        worstVal = Math.max.apply(null, values);
+      } else {
+        bestVal = Math.max.apply(null, values);
+        worstVal = Math.min.apply(null, values.filter(function(v) { return v > 0; }));
+      }
+
+      html += '<tr><td>' + m.label + '</td>';
+      values.forEach(function(v) {
+        var display = '';
+        if (m.fmt === 'money') display = self.fmt(v);
+        else if (m.fmt === 'pct') display = self.fmtPct(v);
+        else display = (v > 0 ? Math.round(v) : '—');
+        var cls = '';
+        if (values.length > 1 && v === bestVal && v > 0) cls = ' class="best"';
+        else if (values.length > 1 && v === worstVal) cls = ' class="worst"';
+        html += '<td' + cls + '>' + display + '</td>';
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+
+    // ---- Chart ----
+    html += '<div class="compare-chart-area">';
+    html += '<h4>核心指标对比图</h4>';
+    html += '<div id="compare-chart" class="chart"></div>';
+    html += '</div>';
+
+    document.getElementById('compare-result').innerHTML = html;
+
+    // Render chart
+    setTimeout(function() { self.renderCompareChart(results); }, 100);
+  },
+
+  renderCompareChart: function(results) {
+    var chartEl = document.getElementById('compare-chart');
+    if (!chartEl || typeof echarts === 'undefined') return;
+
+    var chart = echarts.init(chartEl);
+    var names = results.map(function(r) { return r.name; });
+
+    var option = {
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      legend: { data: ['月收入', '月成本', '月利润', '初始投资'], top: 0 },
+      grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+      xAxis: { type: 'category', data: names, axisLabel: { fontSize: 12 } },
+      yAxis: { type: 'value', name: '元', axisLabel: { fontSize: 11 } },
+      series: [
+        { name: '月收入', type: 'bar', data: results.map(function(r) { return Math.round(r.calc.monthlyNetRevenue); }), itemStyle: { color: '#3b82f6' } },
+        { name: '月成本', type: 'bar', data: results.map(function(r) { return Math.round(r.calc.monthlyTotalCost); }), itemStyle: { color: '#8b5cf6' } },
+        { name: '月利润', type: 'bar', data: results.map(function(r) { return Math.round(r.calc.monthlyNetProfit); }), itemStyle: { color: '#10b981' } },
+        { name: '初始投资', type: 'bar', data: results.map(function(r) { return Math.round(r.calc.totalInitialInvestment); }), itemStyle: { color: '#f59e0b' } }
+      ]
+    };
+    chart.setOption(option);
+    window.addEventListener('resize', function() { chart.resize(); });
   },
 
   /* ===== 重置数据 ===== */
