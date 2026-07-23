@@ -1440,6 +1440,152 @@ var App = {
     this.showToast('记录已删除');
   },
 
+  /* ===== 多校区对比 ===== */
+  showCompare: function() {
+    var records = this.getRecords();
+    var listEl = document.getElementById('compare-checkbox-list');
+    var resultEl = document.getElementById('compare-result');
+    resultEl.innerHTML = '';
+
+    if (records.length === 0) {
+      listEl.innerHTML = '<p style="text-align:center;color:var(--muted);padding:20px;">暂无保存记录，请先保存至少2个校区方案</p>';
+    } else {
+      var self = this;
+      var html = '';
+      records.forEach(function(r) {
+        html += '<label class="compare-checkbox-item">' +
+          '<input type="checkbox" value="' + r.id + '">' +
+          '<span>' + self.esc(r.name) + '</span>' +
+          '<span class="compare-item-date">' + (r.date || '') + '</span>' +
+        '</label>';
+      });
+      listEl.innerHTML = html;
+    }
+    this.showModal('compareModal');
+  },
+
+  runCompare: function() {
+    var checkboxes = document.querySelectorAll('#compare-checkbox-list input[type="checkbox"]:checked');
+    if (checkboxes.length < 2) {
+      this.showToast('请至少勾选2个记录进行对比');
+      return;
+    }
+
+    var self = this;
+    var selectedIds = [];
+    checkboxes.forEach(function(cb) { selectedIds.push(parseFloat(cb.value)); });
+
+    var records = this.getRecords();
+    var selectedRecords = records.filter(function(r) {
+      return selectedIds.indexOf(r.id) >= 0;
+    });
+
+    // Calculate each record
+    var results = [];
+    selectedRecords.forEach(function(r) {
+      var oldData = self.data;
+      var defaults = self.getDefaultData();
+      self.data = Object.assign(defaults, r.data);
+      var calc = self.calculate();
+      results.push({
+        name: r.name,
+        date: r.date,
+        calc: calc
+      });
+    });
+
+    this.renderCompareResult(results);
+  },
+
+  renderCompareResult: function(results) {
+    var self = this;
+    var html = '';
+
+    // ---- Comparison Table ----
+    var metrics = [
+      { key: 'monthlyNetRevenue', label: '月度收入', fmt: 'money' },
+      { key: 'annualRevenue', label: '年度收入', fmt: 'money' },
+      { key: 'monthlyTotalCost', label: '月度成本', fmt: 'money' },
+      { key: 'monthlyNetProfit', label: '月度利润', fmt: 'money' },
+      { key: 'annualNetProfit', label: '年度利润', fmt: 'money' },
+      { key: 'profitMargin', label: '利润率', fmt: 'pct' },
+      { key: 'totalInitialInvestment', label: '初始投资', fmt: 'money' },
+      { key: 'paybackMonths', label: '回本周期(月)', fmt: 'int' },
+      { key: 'areaEfficiency', label: '坪效(元/m²)', fmt: 'money' },
+      { key: 'staffEfficiency', label: '人效(元/人)', fmt: 'money' },
+      { key: 'totalEnrollment', label: '在读学员', fmt: 'int' },
+      { key: 'monthlyNewStudents', label: '月度新生', fmt: 'int' }
+    ];
+
+    html += '<table class="compare-table"><thead><tr><th>对比指标</th>';
+    results.forEach(function(r) {
+      html += '<th>' + self.esc(r.name) + '</th>';
+    });
+    html += '</tr></thead><tbody>';
+
+    metrics.forEach(function(m) {
+      var values = results.map(function(r) { return r.calc[m.key]; });
+      var bestVal, worstVal;
+      if (m.key === 'monthlyTotalCost' || m.key === 'totalInitialInvestment' || m.key === 'paybackMonths') {
+        // Lower is better
+        bestVal = Math.min.apply(null, values.filter(function(v) { return v > 0; }));
+        worstVal = Math.max.apply(null, values);
+      } else {
+        bestVal = Math.max.apply(null, values);
+        worstVal = Math.min.apply(null, values.filter(function(v) { return v > 0; }));
+      }
+
+      html += '<tr><td>' + m.label + '</td>';
+      values.forEach(function(v) {
+        var display = '';
+        if (m.fmt === 'money') display = self.fmt(v);
+        else if (m.fmt === 'pct') display = self.fmtPct(v);
+        else display = (v > 0 ? Math.round(v) : '—');
+        var cls = '';
+        if (values.length > 1 && v === bestVal && v > 0) cls = ' class="best"';
+        else if (values.length > 1 && v === worstVal) cls = ' class="worst"';
+        html += '<td' + cls + '>' + display + '</td>';
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+
+    // ---- Chart ----
+    html += '<div class="compare-chart-area">';
+    html += '<h4>核心指标对比图</h4>';
+    html += '<div id="compare-chart" class="chart"></div>';
+    html += '</div>';
+
+    document.getElementById('compare-result').innerHTML = html;
+
+    // Render chart
+    setTimeout(function() { self.renderCompareChart(results); }, 100);
+  },
+
+  renderCompareChart: function(results) {
+    var chartEl = document.getElementById('compare-chart');
+    if (!chartEl || typeof echarts === 'undefined') return;
+
+    var chart = echarts.init(chartEl);
+    var names = results.map(function(r) { return r.name; });
+
+    var option = {
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      legend: { data: ['月收入', '月成本', '月利润', '初始投资'], top: 0 },
+      grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+      xAxis: { type: 'category', data: names, axisLabel: { fontSize: 12 } },
+      yAxis: { type: 'value', name: '元', axisLabel: { fontSize: 11 } },
+      series: [
+        { name: '月收入', type: 'bar', data: results.map(function(r) { return Math.round(r.calc.monthlyNetRevenue); }), itemStyle: { color: '#3b82f6' } },
+        { name: '月成本', type: 'bar', data: results.map(function(r) { return Math.round(r.calc.monthlyTotalCost); }), itemStyle: { color: '#8b5cf6' } },
+        { name: '月利润', type: 'bar', data: results.map(function(r) { return Math.round(r.calc.monthlyNetProfit); }), itemStyle: { color: '#10b981' } },
+        { name: '初始投资', type: 'bar', data: results.map(function(r) { return Math.round(r.calc.totalInitialInvestment); }), itemStyle: { color: '#f59e0b' } }
+      ]
+    };
+    chart.setOption(option);
+    window.addEventListener('resize', function() { chart.resize(); });
+  },
+
   /* ===== 重置数据 ===== */
   resetData: function() {
     if (confirm('确定要重置所有数据吗？此操作不可撤销。')) {
