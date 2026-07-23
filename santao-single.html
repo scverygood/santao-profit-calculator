@@ -1520,16 +1520,20 @@ var App = {
     var d = this.data;
     var p = d.operatingParams;
 
-    // Revenue
+    // Revenue (normalized to monthly)
     var monthlyGrossRevenue = 0;
     var totalEnrollment = 0;
     d.courses.forEach(function(c) {
       var rev = (c.pricePerHour || 0) * (c.hours || 0) * (c.enrollment || 0);
+      // Normalize to monthly: quarter cards divided by 3
+      if (c.name && c.name.indexOf('季卡') >= 0) {
+        rev = rev / 3;
+      }
       monthlyGrossRevenue += rev;
       totalEnrollment += c.enrollment || 0;
     });
-    var renewalRevenue = monthlyGrossRevenue * (p.renewalRate || 0) / 100;
-    var monthlyNetRevenue = (monthlyGrossRevenue + renewalRevenue) * (1 - (p.refundRate || 0) / 100);
+    // Net revenue after refund deduction (renewal rate is a sustainability metric, not revenue addition)
+    var monthlyNetRevenue = monthlyGrossRevenue * (1 - (p.refundRate || 0) / 100);
     var annualRevenue = monthlyNetRevenue * 12;
 
     // Staffing cost
@@ -1625,7 +1629,7 @@ var App = {
 
     return {
       monthlyGrossRevenue: monthlyGrossRevenue,
-      renewalRevenue: renewalRevenue,
+      renewalRevenue: 0,
       monthlyNetRevenue: monthlyNetRevenue,
       annualRevenue: annualRevenue,
       monthlyFixedCosts: monthlyFixedCosts,
@@ -1664,7 +1668,7 @@ var App = {
       '<div class="metric-card orange"><div class="label">回本周期</div><div class="value">' + paybackText + '</div><div class="desc">初始投资 / 月均净利润</div></div>' +
       '<div class="metric-card green"><div class="label">年度净利润</div><div class="value">' + this.fmt(r.annualNetProfit) + '</div><div class="desc">月度净收入 - 月度总成本</div></div>' +
       '<div class="metric-card red"><div class="label">利润率</div><div class="value">' + this.fmtPct(r.profitMargin) + '</div><div class="desc">净利润 / 净收入</div></div>' +
-      '<div class="metric-card blue"><div class="label">年度总收入</div><div class="value">' + this.fmt(r.annualRevenue) + '</div><div class="desc">课程+续费，扣除退费</div></div>' +
+      '<div class="metric-card blue"><div class="label">年度总收入</div><div class="value">' + this.fmt(r.annualRevenue) + '</div><div class="desc">课程收入，扣除退费</div></div>' +
       '<div class="metric-card purple"><div class="label">年度总成本</div><div class="value">' + this.fmt(r.annualTotalCost) + '</div><div class="desc">全部运营支出</div></div>' +
       '<div class="metric-card teal"><div class="label">现金流回正</div><div class="value">' + cashFlowText + '</div><div class="desc">含初始投资累计现金流转正</div></div>';
     document.getElementById('metrics-grid').innerHTML = metricsHtml;
@@ -1856,9 +1860,12 @@ var App = {
     enrollmentChanges.forEach(function(chg) {
       var factor = 1 + chg / 100;
       var gross = 0;
-      d.courses.forEach(function(c) { gross += (c.pricePerHour||0) * (c.hours||0) * (c.enrollment||0) * factor; });
-      var renewal = gross * (p.renewalRate||0) / 100;
-      var netRev = (gross + renewal) * (1 - (p.refundRate||0) / 100);
+      d.courses.forEach(function(c) {
+        var rev = (c.pricePerHour||0) * (c.hours||0) * (c.enrollment||0) * factor;
+        if (c.name && c.name.indexOf('季卡') >= 0) { rev = rev / 3; }
+        gross += rev;
+      });
+      var netRev = gross * (1 - (p.refundRate||0) / 100);
       var profit = netRev - r.monthlyTotalCost;
       var margin = netRev > 0 ? (profit / netRev * 100) : 0;
       var label = (chg >= 0 ? '+' : '') + chg + '%' + (chg === 0 ? ' (当前)' : '');
@@ -1866,17 +1873,17 @@ var App = {
     });
     html += '</tbody></table></div>';
 
-    // 2. 续费率变化
-    var renewalRates = [30, 40, 50, 60, 70, 80, 90];
-    html += '<div class="sensitivity-card"><h4>续费率变化</h4><div class="desc">调整学员续费比例</div>';
+    // 2. 月度成本变化
+    var costChanges = [-20, -10, 0, 10, 20, 30];
+    html += '<div class="sensitivity-card"><h4>月度成本变化</h4><div class="desc">调整全部运营支出</div>';
     html += '<table><thead><tr><th>变动</th><th>月收入</th><th>月利润</th><th>利润率</th></tr></thead><tbody>';
-    renewalRates.forEach(function(rate) {
-      var renewal = r.monthlyGrossRevenue * rate / 100;
-      var netRev = (r.monthlyGrossRevenue + renewal) * (1 - (p.refundRate||0) / 100);
-      var profit = netRev - r.monthlyTotalCost;
-      var margin = netRev > 0 ? (profit / netRev * 100) : 0;
-      var label = rate + '%' + (rate === (p.renewalRate||0) ? ' (当前)' : '');
-      html += '<tr' + (rate === (p.renewalRate||0) ? ' class="highlight"' : '') + '><td>' + label + '</td><td>' + self.fmt(netRev) + '</td><td>' + self.fmt(profit) + '</td><td>' + self.fmtPct(margin) + '</td></tr>';
+    costChanges.forEach(function(chg) {
+      var costFactor = 1 + chg / 100;
+      var adjCost = r.monthlyTotalCost * costFactor;
+      var profit = r.monthlyNetRevenue - adjCost;
+      var margin = r.monthlyNetRevenue > 0 ? (profit / r.monthlyNetRevenue * 100) : 0;
+      var label = (chg >= 0 ? '+' : '') + chg + '%' + (chg === 0 ? ' (当前)' : '');
+      html += '<tr' + (chg === 0 ? ' class="highlight"' : '') + '><td>' + label + '</td><td>' + self.fmt(r.monthlyNetRevenue) + '</td><td>' + self.fmt(profit) + '</td><td>' + self.fmtPct(margin) + '</td></tr>';
     });
     html += '</tbody></table></div>';
 
@@ -1887,9 +1894,12 @@ var App = {
     priceChanges.forEach(function(chg) {
       var factor = 1 + chg / 100;
       var gross = 0;
-      d.courses.forEach(function(c) { gross += (c.pricePerHour||0) * factor * (c.hours||0) * (c.enrollment||0); });
-      var renewal = gross * (p.renewalRate||0) / 100;
-      var netRev = (gross + renewal) * (1 - (p.refundRate||0) / 100);
+      d.courses.forEach(function(c) {
+        var rev = (c.pricePerHour||0) * factor * (c.hours||0) * (c.enrollment||0);
+        if (c.name && c.name.indexOf('季卡') >= 0) { rev = rev / 3; }
+        gross += rev;
+      });
+      var netRev = gross * (1 - (p.refundRate||0) / 100);
       var profit = netRev - r.monthlyTotalCost;
       var margin = netRev > 0 ? (profit / netRev * 100) : 0;
       var label = (chg >= 0 ? '+' : '') + chg + '%' + (chg === 0 ? ' (当前)' : '');
@@ -1902,8 +1912,7 @@ var App = {
     html += '<div class="sensitivity-card"><h4>退费率变化</h4><div class="desc">调整学员退费比例</div>';
     html += '<table><thead><tr><th>变动</th><th>月收入</th><th>月利润</th><th>利润率</th></tr></thead><tbody>';
     refundRates.forEach(function(rate) {
-      var renewal = r.monthlyGrossRevenue * (p.renewalRate||0) / 100;
-      var netRev = (r.monthlyGrossRevenue + renewal) * (1 - rate / 100);
+      var netRev = r.monthlyGrossRevenue * (1 - rate / 100);
       var profit = netRev - r.monthlyTotalCost;
       var margin = netRev > 0 ? (profit / netRev * 100) : 0;
       var label = rate + '%' + (rate === (p.refundRate||0) ? ' (当前)' : '');
